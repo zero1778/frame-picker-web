@@ -53,6 +53,14 @@
     background:var(--card2); color:var(--text); border:1px solid var(--border);
     border-radius:10px; padding:10px 12px; font-size:1rem; width:100%;
   }
+  input[type=range]{
+    -webkit-appearance:none; appearance:none; height:6px; border-radius:3px;
+    background:var(--card2); outline:none;
+  }
+  input[type=range]::-webkit-slider-thumb{
+    -webkit-appearance:none; width:24px; height:24px; border-radius:50%;
+    background:var(--accent); cursor:pointer;
+  }
   .btn{
     border:none; border-radius:12px; padding:12px 18px; font-size:1rem;
     font-weight:600; cursor:pointer; transition:.15s;
@@ -166,13 +174,13 @@
   #lbMain img{max-width:100%; max-height:100%; object-fit:contain; border-radius:6px; will-change:transform;}
   #lbThumbsWrap{position:relative; padding:8px 0 4px;}
   #lbThumbs{
-    display:flex; gap:6px; overflow-x:auto; -webkit-overflow-scrolling:touch;
-    scrollbar-width:none; padding:0 calc(50vw - 31px);
+    display:flex; gap:4px; overflow-x:auto; -webkit-overflow-scrolling:touch;
+    scrollbar-width:none; padding:0 calc(50vw - 23px);
     scroll-snap-type:x proximity;
   }
   #lbThumbs::-webkit-scrollbar{display:none;}
   .lb-thumb{
-    flex:0 0 56px; height:56px; border-radius:8px; overflow:hidden;
+    flex:0 0 42px; height:48px; border-radius:7px; overflow:hidden;
     border:2px solid transparent; scroll-snap-align:center; cursor:pointer;
   }
   .lb-thumb img{width:100%; height:100%; object-fit:cover; pointer-events:none;}
@@ -180,8 +188,8 @@
   .lb-thumb.cur{border-color:#fff;}
   #lbCenterMark{
     position:absolute; left:50%; transform:translateX(-50%); top:4px;
-    width:66px; height:64px; border:2px solid rgba(255,255,255,.4);
-    border-radius:11px; pointer-events:none;
+    width:52px; height:56px; border:2px solid rgba(255,255,255,.4);
+    border-radius:10px; pointer-events:none;
   }
   #lbTop{
     display:flex; align-items:center; gap:10px;
@@ -217,6 +225,16 @@
 
   <div class="panel" id="videoBox">
     <video id="video" playsinline muted controls preload="auto"></video>
+    <div style="display:flex; align-items:center; gap:8px; margin-top:10px;">
+      <span class="badge" id="curTime" style="background:var(--card2); min-width:58px; text-align:center;">00:00.0</span>
+      <input type="range" id="scrub" min="0" max="1000" value="0" style="flex:1;">
+    </div>
+    <div class="row" style="margin-top:8px; gap:6px; flex-wrap:nowrap;">
+      <button class="btn btn-ghost btn-sm" data-step="-1" style="flex:1;">−1s</button>
+      <button class="btn btn-ghost btn-sm" data-step="-0.1" style="flex:1;">−0.1s</button>
+      <button class="btn btn-ghost btn-sm" data-step="0.1" style="flex:1;">+0.1s</button>
+      <button class="btn btn-ghost btn-sm" data-step="1" style="flex:1;">+1s</button>
+    </div>
     <div id="videoMeta"></div>
     <div class="row" style="margin-top:10px;">
       <button class="btn btn-blue" style="flex:1;" id="btnCaptureNow">📸 Chụp khung hiện tại</button>
@@ -352,6 +370,31 @@ function loadVideo(file){
   };
 }
 
+/* ---------- Tua video chính (kéo được cả 2 chiều) ---------- */
+const scrub = $('scrub');
+let scrubbing = false;
+scrub.addEventListener('input', () => {
+  scrubbing = true;
+  if (video.duration) {
+    video.currentTime = scrub.value / 1000 * video.duration;
+    $('curTime').textContent = fmtTime(video.currentTime);
+  }
+});
+scrub.addEventListener('change', () => { scrubbing = false; });
+video.addEventListener('timeupdate', () => {
+  if (scrubbing || !video.duration) return;
+  scrub.value = Math.round(video.currentTime / video.duration * 1000);
+  $('curTime').textContent = fmtTime(video.currentTime);
+});
+document.querySelectorAll('[data-step]').forEach(b => {
+  b.onclick = () => {
+    if (!video.duration) return;
+    video.pause();
+    video.currentTime = Math.max(0, Math.min(video.duration - 0.05,
+        video.currentTime + parseFloat(b.dataset.step)));
+  };
+});
+
 /* ---------- Cài đặt ---------- */
 $('modeSel').onchange = () => {
   const isCount = $('modeSel').value === 'count';
@@ -437,9 +480,18 @@ async function extractParallel(times, onProgress){
       const i = next++;
       if (i >= times.length) break;
       await seekV(v, times[i]);
-      if (isBlack()) { // chờ decode xong rồi thử lại 1 lần
-        await new Promise(w => setTimeout(w, 120));
-        if (isBlack()) await seekV(v, Math.min(times[i] + 0.08, video.duration - 0.05));
+      // chờ decoder sẵn sàng
+      let w = 0;
+      while (v.readyState < 2 && w++ < 10) await sleep(50);
+      // dò đen: thử lại tới 3 lần, mỗi lần chờ lâu hơn + seek lệch dần
+      let tries = 0;
+      while (isBlack() && tries < 3) {
+        await sleep(130 + tries * 120);
+        if (!isBlack()) break;
+        await seekV(v, Math.min(times[i] + 0.1 * (tries + 1), video.duration - 0.05));
+        let w2 = 0;
+        while (v.readyState < 2 && w2++ < 10) await sleep(50);
+        tries++;
       }
       cx.drawImage(v, 0, 0, W, H);
       results[i] = await new Promise(r => c.toBlob(r, fmt, 0.9));
@@ -822,7 +874,7 @@ lbMainEl.addEventListener('wheel', e => {
   clampZ(); lbApply(false);
 }, {passive: false});
 
-const LB_ITEM = 62; // 56px thumb + 6px gap
+const LB_ITEM = 46; // 42px thumb + 4px gap
 function lbGo(i, smooth){
   i = Math.max(0, Math.min(frames.length - 1, i));
   $('lbThumbs').scrollTo({left: i * LB_ITEM, behavior: smooth ? 'smooth' : 'auto'});
@@ -880,6 +932,7 @@ document.addEventListener('keydown', e => {
 });
 
 /* ---------- Utils ---------- */
+const sleep = ms => new Promise(r => setTimeout(r, ms));
 function fmtTime(s){
   const m = Math.floor(s / 60), sec = (s % 60).toFixed(1).padStart(4, '0');
   return `${String(m).padStart(2,'0')}:${sec}`;
