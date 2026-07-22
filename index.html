@@ -162,8 +162,8 @@
     display:none; position:fixed; inset:0; z-index:100;
     background:rgba(0,0,0,.95); flex-direction:column;
   }
-  #lbMain{flex:1; display:flex; align-items:center; justify-content:center; padding:10px; min-height:0;}
-  #lbMain img{max-width:100%; max-height:100%; object-fit:contain; border-radius:6px;}
+  #lbMain{flex:1; display:flex; align-items:center; justify-content:center; padding:10px; min-height:0; touch-action:none; overflow:hidden;}
+  #lbMain img{max-width:100%; max-height:100%; object-fit:contain; border-radius:6px; will-change:transform;}
   #lbThumbsWrap{position:relative; padding:8px 0 4px;}
   #lbThumbs{
     display:flex; gap:6px; overflow-x:auto; -webkit-overflow-scrolling:touch;
@@ -422,10 +422,25 @@ async function extractParallel(times, onProgress){
     const c = document.createElement('canvas');
     c.width = W; c.height = H;
     const cx = c.getContext('2d');
+    // canvas tí hon để dò frame đen (decoder chưa kịp giải mã)
+    const probe = document.createElement('canvas');
+    probe.width = 12; probe.height = 12;
+    const px = probe.getContext('2d', {willReadFrequently: true});
+    const isBlack = () => {
+      px.drawImage(v, 0, 0, 12, 12);
+      const d = px.getImageData(0, 0, 12, 12).data;
+      let s = 0;
+      for (let k = 0; k < d.length; k += 4) s += d[k] + d[k+1] + d[k+2];
+      return s < (d.length / 4) * 6; // gần như đen tuyệt đối
+    };
     while (true) {
       const i = next++;
       if (i >= times.length) break;
       await seekV(v, times[i]);
+      if (isBlack()) { // chờ decode xong rồi thử lại 1 lần
+        await new Promise(w => setTimeout(w, 120));
+        if (isBlack()) await seekV(v, Math.min(times[i] + 0.08, video.duration - 0.05));
+      }
       cx.drawImage(v, 0, 0, W, H);
       results[i] = await new Promise(r => c.toBlob(r, fmt, 0.9));
       done++;
@@ -483,20 +498,25 @@ function readyV(v){
 function seekV(v, t){
   return new Promise(r => {
     let settled = false;
-    const finish = () => {
+    let vfc = 0;
+    const done = () => {
       if (settled) return;
       settled = true;
-      v.removeEventListener('seeked', finish);
       clearTimeout(to);
-      setTimeout(r, 10);
+      v.removeEventListener('seeked', onSeeked);
+      if (vfc && v.cancelVideoFrameCallback) v.cancelVideoFrameCallback(vfc);
+      r();
     };
     // vốn đã đứng đúng chỗ → seeked sẽ KHÔNG bắn → xong luôn
     if (Math.abs(v.currentTime - t) < 0.01 && v.readyState >= 2) {
       return r();
     }
-    // bảo hiểm: quá 2.5s không thấy seeked thì vẫn đi tiếp, không treo app
-    const to = setTimeout(finish, 2500);
-    v.addEventListener('seeked', finish);
+    // bảo hiểm: quá 2.5s vẫn đi tiếp, không treo app
+    const to = setTimeout(done, 2500);
+    // rVFC = frame THẬT SỰ đã decode + hiển thị → hết ảnh đen
+    const onSeeked = () => setTimeout(done, v.requestVideoFrameCallback ? 250 : 40);
+    if (v.requestVideoFrameCallback) vfc = v.requestVideoFrameCallback(() => done());
+    v.addEventListener('seeked', onSeeked);
     v.currentTime = t;
   });
 }
@@ -700,8 +720,107 @@ function openLightbox(i){
     t.appendChild(d);
   });
   $('lightbox').style.display = 'flex';
-  requestAnimationFrame(() => { lbGo(i, false); updateLbUI(); });
+  requestAnimationFrame(() => { resetZoom(false); lbGo(i, false); updateLbUI(); });
 }
+
+/* ---------- Pinch zoom / pan trong preview ---------- */
+const lbZ = {s: 1, x: 0, y: 0};
+function lbApply(anim){
+  const img = $('lbImg');
+  img.style.transition = anim ? 'transform .18s ease-out' : 'none';
+  img.style.transform = `translate(${lbZ.x}px, ${lbZ.y}px) scale(${lbZ.s})`;
+}
+function resetZoom(anim){ lbZ.s = 1; lbZ.x = 0; lbZ.y = 0; lbApply(anim); }
+function clampZ(){
+  const r = $('lbMain').getBoundingClientRect();
+  const mx = (lbZ.s - 1) * r.width / 2, my = (lbZ.s - 1) * r.height / 2;
+  lbZ.x = Math.max(-mx, Math.min(mx, lbZ.x));
+  lbZ.y = Math.max(-my, Math.min(my, lbZ.y));
+}
+function relC(px, py){
+  const r = $('lbMain').getBoundingClientRect();
+  return {x: px - r.left - r.width / 2, y: py - r.top - r.height / 2};
+}
+const midT = (a, b) => ({x: (a.clientX + b.clientX) / 2, y: (a.clientY + b.clientY) / 2});
+
+let lbG = null, lbLastTap = 0;
+const lbMainEl = $('lbMain');
+
+lbMainEl.addEventListener('touchstart', e => {
+  if (e.touches.length === 2) {
+    const [a, b] = e.touches;
+    lbG = {mode: 'pinch',
+           d0: Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY),
+           m0: midT(a, b), s0: lbZ.s, x0: lbZ.x, y0: lbZ.y};
+    e.preventDefault();
+  } else if (e.touches.length === 1) {
+    const t = e.touches[0];
+    const now = Date.now();
+    if (now - lbLastTap < 300) { // double-tap: zoom nhanh 2.5x / thu về
+      lbLastTap = 0;
+      lbG = null;
+      if (lbZ.s > 1) { resetZoom(true); }
+      else {
+        const m = relC(t.clientX, t.clientY);
+        lbZ.s = 2.5;
+        lbZ.x = m.x * (1 - 2.5);
+        lbZ.y = m.y * (1 - 2.5);
+        clampZ(); lbApply(true);
+      }
+      e.preventDefault();
+      return;
+    }
+    lbLastTap = now;
+    if (lbZ.s > 1) {
+      lbG = {mode: 'pan', p0: {x: t.clientX, y: t.clientY}, x0: lbZ.x, y0: lbZ.y};
+    }
+  }
+}, {passive: false});
+
+lbMainEl.addEventListener('touchmove', e => {
+  if (!lbG) return;
+  e.preventDefault();
+  if (lbG.mode === 'pinch' && e.touches.length === 2) {
+    const [a, b] = e.touches;
+    const d = Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY);
+    const s = Math.max(1, Math.min(5, lbG.s0 * d / lbG.d0));
+    const m0 = relC(lbG.m0.x, lbG.m0.y);
+    const mNow = midT(a, b);
+    const m1 = relC(mNow.x, mNow.y);
+    lbZ.s = s;
+    lbZ.x = m1.x - (s / lbG.s0) * (m0.x - lbG.x0);
+    lbZ.y = m1.y - (s / lbG.s0) * (m0.y - lbG.y0);
+    clampZ(); lbApply(false);
+  } else if (lbG.mode === 'pan' && e.touches.length === 1) {
+    const t = e.touches[0];
+    lbZ.x = lbG.x0 + (t.clientX - lbG.p0.x);
+    lbZ.y = lbG.y0 + (t.clientY - lbG.p0.y);
+    clampZ(); lbApply(false);
+  }
+}, {passive: false});
+
+lbMainEl.addEventListener('touchend', e => {
+  if (e.touches.length === 0) lbG = null;
+  else if (e.touches.length === 1 && lbG && lbG.mode === 'pinch') {
+    const t = e.touches[0];
+    lbG = lbZ.s > 1
+        ? {mode: 'pan', p0: {x: t.clientX, y: t.clientY}, x0: lbZ.x, y0: lbZ.y}
+        : null;
+  }
+});
+
+// desktop: lăn chuột để zoom
+lbMainEl.addEventListener('wheel', e => {
+  e.preventDefault();
+  const m = relC(e.clientX, e.clientY);
+  const s0 = lbZ.s;
+  const s = Math.max(1, Math.min(5, s0 * (e.deltaY < 0 ? 1.15 : 1 / 1.15)));
+  lbZ.x = m.x - (s / s0) * (m.x - lbZ.x);
+  lbZ.y = m.y - (s / s0) * (m.y - lbZ.y);
+  lbZ.s = s;
+  if (s === 1) { lbZ.x = 0; lbZ.y = 0; }
+  clampZ(); lbApply(false);
+}, {passive: false});
 
 const LB_ITEM = 62; // 56px thumb + 6px gap
 function lbGo(i, smooth){
@@ -719,7 +838,7 @@ $('lbThumbs').addEventListener('scroll', () => {
     if (!frames.length) return;
     const i = Math.max(0, Math.min(frames.length - 1,
         Math.round($('lbThumbs').scrollLeft / LB_ITEM)));
-    if (i !== lbCur) { lbCur = i; updateLbUI(); }
+    if (i !== lbCur) { lbCur = i; resetZoom(false); updateLbUI(); }
   });
 });
 
