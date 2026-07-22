@@ -218,10 +218,12 @@
 <div class="wrap">
   <div id="dropzone">
     <div class="big">📹</div>
-    <div style="font-weight:600; margin-top:6px;">Bấm để chọn video</div>
-    <p>Xử lý ngay trên máy, không upload đi đâu cả.</p>
+    <div style="font-weight:600; margin-top:6px;">Bấm để chọn video / Live Photo</div>
+    <p>Xử lý ngay trên máy, không upload đi đâu cả.<br>
+    💡 Live Photo iPhone: vào <b>Photos → Chia sẻ → Lưu dưới dạng video</b> rồi chọn video đó.<br>
+    Motion Photo của Android thì chọn thẳng luôn — app tự móc video bên trong ra.</p>
   </div>
-  <input type="file" id="fileInput" accept="video/*">
+  <input type="file" id="fileInput" accept="video/*,image/*">
 
   <div class="panel" id="videoBox">
     <video id="video" playsinline muted controls preload="auto"></video>
@@ -355,9 +357,47 @@ const dz = $('dropzone'), fi = $('fileInput');
 dz.onclick = () => fi.click();
 dz.ondragover = e => { e.preventDefault(); dz.classList.add('drag'); };
 dz.ondragleave = () => dz.classList.remove('drag');
-dz.ondrop = e => { e.preventDefault(); dz.classList.remove('drag'); if (e.dataTransfer.files[0]) loadVideo(e.dataTransfer.files[0]); };
-fi.onchange = () => { if (fi.files[0]) loadVideo(fi.files[0]); };
+dz.ondrop = e => { e.preventDefault(); dz.classList.remove('drag'); if (e.dataTransfer.files[0]) handleFile(e.dataTransfer.files[0]); };
+fi.onchange = () => { if (fi.files[0]) handleFile(fi.files[0]); };
 $('btnChangeVideo').onclick = () => fi.click();
+
+/* ---------- Nhận diện loại file: video / Motion Photo / ảnh tĩnh ---------- */
+async function handleFile(file){
+  if (file.type.startsWith('video/') || /\.(mp4|mov|webm|m4v)$/i.test(file.name)) {
+    return loadVideo(file);
+  }
+  if (file.type.startsWith('image/')) {
+    toast('🔍 Đang kiểm tra ảnh chuyển động…');
+    const mv = await videoFromMotionPhoto(file);
+    if (mv) {
+      toast('🎉 Tìm thấy video trong Motion Photo!');
+      return loadVideo(new File([mv],
+          file.name.replace(/\.[^.]+$/, '') + '.mp4', {type: 'video/mp4'}));
+    }
+    // ảnh tĩnh (Live Photo iPhone qua web chỉ đưa ra ảnh tĩnh)
+    frames.push({blob: file, url: URL.createObjectURL(file), time: 0, sel: false});
+    cur = frames.length - 1;
+    render();
+    toast('🖼 Đây là ảnh tĩnh — đã thêm vào danh sách. Muốn tách nhiều frame từ Live Photo: Photos → Chia sẻ → "Lưu dưới dạng video" rồi chọn video đó.', 5000);
+    return;
+  }
+  toast('❌ File không hỗ trợ', 3000);
+}
+
+// Motion Photo (Android/Samsung/Pixel): file JPEG có nguyên video MP4 nối phía sau
+async function videoFromMotionPhoto(file){
+  try {
+    const buf = new Uint8Array(await file.arrayBuffer());
+    if (!(buf[0] === 0xFF && buf[1] === 0xD8)) return null; // chỉ quét JPEG
+    // tìm box 'ftyp' của MP4 nhúng bên trong
+    for (let i = 2; i < buf.length - 8; i++) {
+      if (buf[i] === 0x66 && buf[i+1] === 0x74 && buf[i+2] === 0x79 && buf[i+3] === 0x70) {
+        return new Blob([buf.slice(i - 4)], {type: 'video/mp4'});
+      }
+    }
+  } catch (e) { /* ignore */ }
+  return null;
+}
 
 function loadVideo(file){
   videoName = file.name.replace(/\.[^.]+$/, '') || 'video';
@@ -938,11 +978,11 @@ function fmtTime(s){
   return `${String(m).padStart(2,'0')}:${sec}`;
 }
 let toastTimer;
-function toast(msg){
+function toast(msg, ms = 2500){
   const t = $('toast');
   t.textContent = msg; t.classList.add('show');
   clearTimeout(toastTimer);
-  toastTimer = setTimeout(() => t.classList.remove('show'), 2500);
+  toastTimer = setTimeout(() => t.classList.remove('show'), ms);
 }
 </script>
 </body>

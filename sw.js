@@ -1,4 +1,4 @@
-const CACHE = 'frame-picker-v8';
+const CACHE = 'frame-picker-v9';
 const ASSETS = [
   './index.html',
   './jszip.min.js',
