@@ -371,7 +371,8 @@ $('btnExtract').onclick = async () => {
     const step = dur / n;
     for (let i = 0; i < n; i++) times.push(Math.min(i * step + step / 2, dur - 0.05));
   } else {
-    for (let t = 0.05; t < dur; t += val) times.push(t);
+    for (let t = 0.05; t < dur - 0.1; t += val) times.push(t);
+    if (!times.length) times.push(0.05);
   }
 
   const btn = $('btnExtract');
@@ -481,8 +482,21 @@ function readyV(v){
 
 function seekV(v, t){
   return new Promise(r => {
-    const d = () => { v.removeEventListener('seeked', d); setTimeout(r, 10); };
-    v.addEventListener('seeked', d);
+    let settled = false;
+    const finish = () => {
+      if (settled) return;
+      settled = true;
+      v.removeEventListener('seeked', finish);
+      clearTimeout(to);
+      setTimeout(r, 10);
+    };
+    // vốn đã đứng đúng chỗ → seeked sẽ KHÔNG bắn → xong luôn
+    if (Math.abs(v.currentTime - t) < 0.01 && v.readyState >= 2) {
+      return r();
+    }
+    // bảo hiểm: quá 2.5s không thấy seeked thì vẫn đi tiếp, không treo app
+    const to = setTimeout(finish, 2500);
+    v.addEventListener('seeked', finish);
     v.currentTime = t;
   });
 }
