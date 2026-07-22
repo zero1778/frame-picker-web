@@ -162,16 +162,27 @@
     display:none; position:fixed; inset:0; z-index:100;
     background:rgba(0,0,0,.95); flex-direction:column;
   }
-  #lbSlider{
-    flex:1; display:flex; overflow-x:auto; scroll-snap-type:x mandatory;
-    -webkit-overflow-scrolling:touch; scrollbar-width:none;
+  #lbMain{flex:1; display:flex; align-items:center; justify-content:center; padding:10px; min-height:0;}
+  #lbMain img{max-width:100%; max-height:100%; object-fit:contain; border-radius:6px;}
+  #lbThumbsWrap{position:relative; padding:8px 0 4px;}
+  #lbThumbs{
+    display:flex; gap:6px; overflow-x:auto; -webkit-overflow-scrolling:touch;
+    scrollbar-width:none; padding:0 calc(50vw - 31px);
+    scroll-snap-type:x proximity;
   }
-  #lbSlider::-webkit-scrollbar{display:none;}
-  .lb-slide{
-    flex:0 0 100%; scroll-snap-align:center; display:flex;
-    align-items:center; justify-content:center; padding:10px;
+  #lbThumbs::-webkit-scrollbar{display:none;}
+  .lb-thumb{
+    flex:0 0 56px; height:56px; border-radius:8px; overflow:hidden;
+    border:2px solid transparent; scroll-snap-align:center; cursor:pointer;
   }
-  .lb-slide img{max-width:100%; max-height:100%; object-fit:contain;}
+  .lb-thumb img{width:100%; height:100%; object-fit:cover; pointer-events:none;}
+  .lb-thumb.sel{border-color:var(--accent);}
+  .lb-thumb.cur{border-color:#fff;}
+  #lbCenterMark{
+    position:absolute; left:50%; transform:translateX(-50%); top:4px;
+    width:66px; height:64px; border:2px solid rgba(255,255,255,.4);
+    border-radius:11px; pointer-events:none;
+  }
   #lbTop{
     display:flex; align-items:center; gap:10px;
     padding:calc(10px + env(safe-area-inset-top)) 14px 10px;
@@ -293,7 +304,11 @@
     <div style="flex:1;"></div>
     <span class="badge" id="lbPos"></span>
   </div>
-  <div id="lbSlider"></div>
+  <div id="lbMain"><img id="lbImg" alt=""></div>
+  <div id="lbThumbsWrap">
+    <div id="lbThumbs"></div>
+    <div id="lbCenterMark"></div>
+  </div>
   <div id="lbBottom">
     <button class="btn btn-primary" id="lbToggle" style="flex:1;">✓ Chọn</button>
     <button class="btn btn-blue" id="lbSave">📤</button>
@@ -622,38 +637,57 @@ function saveBlob(blob, name){
   setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 4000);
 }
 
-/* ---------- Lightbox (phóng to, trượt được) ---------- */
+/* ---------- Lightbox: kéo dải thumbnail để lướt nhanh ---------- */
 function openLightbox(i){
   lbCur = i;
-  const s = $('lbSlider');
-  s.innerHTML = '';
-  frames.forEach(f => {
+  const t = $('lbThumbs');
+  t.innerHTML = '';
+  frames.forEach((f, j) => {
     const d = document.createElement('div');
-    d.className = 'lb-slide';
+    d.className = 'lb-thumb' + (f.sel ? ' sel' : '');
     d.innerHTML = `<img src="${f.url}" loading="lazy" alt="">`;
-    s.appendChild(d);
+    d.onclick = () => lbGo(j, true);
+    t.appendChild(d);
   });
   $('lightbox').style.display = 'flex';
-  requestAnimationFrame(() => {
-    s.scrollTo({left: i * s.clientWidth, behavior:'auto'});
-    updateLbUI();
-  });
+  requestAnimationFrame(() => { lbGo(i, false); updateLbUI(); });
 }
-let lbTimer;
-$('lbSlider').addEventListener('scroll', () => {
-  clearTimeout(lbTimer);
-  lbTimer = setTimeout(() => {
-    const s = $('lbSlider');
-    const i = Math.round(s.scrollLeft / s.clientWidth);
-    if (i >= 0 && i < frames.length && i !== lbCur) { lbCur = i; updateLbUI(); }
-  }, 80);
+
+const LB_ITEM = 62; // 56px thumb + 6px gap
+function lbGo(i, smooth){
+  i = Math.max(0, Math.min(frames.length - 1, i));
+  $('lbThumbs').scrollTo({left: i * LB_ITEM, behavior: smooth ? 'smooth' : 'auto'});
+}
+
+// ảnh nằm giữa dải thumbnail = ảnh đang preview (cập nhật tức thì theo từng frame kéo)
+let lbRaf = false;
+$('lbThumbs').addEventListener('scroll', () => {
+  if (lbRaf) return;
+  lbRaf = true;
+  requestAnimationFrame(() => {
+    lbRaf = false;
+    if (!frames.length) return;
+    const i = Math.max(0, Math.min(frames.length - 1,
+        Math.round($('lbThumbs').scrollLeft / LB_ITEM)));
+    if (i !== lbCur) { lbCur = i; updateLbUI(); }
+  });
 });
+
+let lbPrevCurEl = null;
 function updateLbUI(){
   const f = frames[lbCur];
+  $('lbImg').src = f.url;
   $('lbPos').textContent = `${lbCur + 1}/${frames.length} • ${fmtTime(f.time)}`;
   $('lbToggle').textContent = f.sel ? '✓ Đã chọn — bấm để bỏ' : '＋ Chọn ảnh này';
   $('lbToggle').className = 'btn btn-sm ' + (f.sel ? 'btn-primary' : 'btn-blue');
   $('lbToggle').style.flex = '1';
+  const thumbs = $('lbThumbs').children;
+  if (lbPrevCurEl) lbPrevCurEl.classList.remove('cur');
+  if (thumbs[lbCur]) {
+    thumbs[lbCur].classList.add('cur');
+    thumbs[lbCur].classList.toggle('sel', f.sel);
+    lbPrevCurEl = thumbs[lbCur];
+  }
 }
 $('lbClose').onclick = () => {
   $('lightbox').style.display = 'none';
@@ -672,8 +706,8 @@ $('lbSave').onclick = async () => {
 document.addEventListener('keydown', e => {
   if ($('lightbox').style.display !== 'flex') return;
   if (e.key === 'Escape') $('lbClose').click();
-  if (e.key === 'ArrowLeft' && lbCur > 0) $('lbSlider').scrollTo({left:(lbCur-1)*$('lbSlider').clientWidth, behavior:'smooth'});
-  if (e.key === 'ArrowRight' && lbCur < frames.length-1) $('lbSlider').scrollTo({left:(lbCur+1)*$('lbSlider').clientWidth, behavior:'smooth'});
+  if (e.key === 'ArrowLeft') lbGo(lbCur - 1, true);
+  if (e.key === 'ArrowRight') lbGo(lbCur + 1, true);
 });
 
 /* ---------- Utils ---------- */
