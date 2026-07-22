@@ -234,6 +234,14 @@
           <option value="image/png">PNG</option>
         </select>
       </div>
+      <div class="field">
+        <label>Độ phân giải</label>
+        <select id="resSel">
+          <option value="1280" selected>Nhanh (1280px)</option>
+          <option value="0">Gốc (nét nhất, chậm)</option>
+          <option value="854">Nhẹ (854px)</option>
+        </select>
+      </div>
     </div>
     <div class="row" style="margin-top:12px;">
       <button class="btn btn-primary" id="btnExtract" style="flex:1;">✂️ Bắt đầu tách ảnh</button>
@@ -336,7 +344,7 @@ $('modeSel').onchange = () => {
   $('valInput').value = isCount ? 30 : 1;
 };
 
-/* ---------- Tách ảnh ---------- */
+/* ---------- Tách ảnh (song song nhiều luồng) ---------- */
 $('btnExtract').onclick = async () => {
   const dur = video.duration;
   if (!dur) return;
@@ -354,31 +362,78 @@ $('btnExtract').onclick = async () => {
   const btn = $('btnExtract');
   btn.disabled = true;
   $('progressWrap').style.display = 'block';
+  $('progressFill').style.width = '0%';
+  $('progressText').textContent = 'Đang chuẩn bị…';
   video.pause();
-  canvas.width = video.videoWidth;
-  canvas.height = video.videoHeight;
 
+  const t0 = performance.now();
   const startIdx = frames.length;
-  for (let i = 0; i < times.length; i++) {
-    await seekTo(times[i]);
-    await captureFrame(times[i]);
-    const pct = Math.round((i + 1) / times.length * 100);
-    $('progressFill').style.width = pct + '%';
-    $('progressText').textContent = `Đang tách ${i + 1}/${times.length} ảnh… (${pct}%)`;
+  try {
+    const blobs = await extractParallel(times, (done, total) => {
+      const pct = Math.round(done / total * 100);
+      $('progressFill').style.width = pct + '%';
+      $('progressText').textContent = `Đang tách ${done}/${total} ảnh… (${pct}%)`;
+    });
+    blobs.forEach((blob, i) => {
+      if (blob) frames.push({ blob, url: URL.createObjectURL(blob), time: times[i], sel: false });
+    });
+    const secs = ((performance.now() - t0) / 1000).toFixed(1);
+    $('progressText').textContent = `✅ Xong ${times.length} ảnh trong ${secs}s`;
+  } catch (e) {
+    $('progressText').textContent = '❌ Lỗi: ' + (e.message || e);
   }
-  $('progressText').textContent = `✅ Xong! Đã tách ${times.length} ảnh.`;
   btn.disabled = false;
-  cur = startIdx;
+  cur = startIdx < frames.length ? startIdx : 0;
   render();
   $('framesPanel').scrollIntoView({behavior:'smooth'});
 };
 
-function seekTo(t){
-  return new Promise(res => {
-    const done = () => { video.removeEventListener('seeked', done); setTimeout(res, 20); };
-    video.addEventListener('seeked', done);
-    video.currentTime = t;
-  });
+function targetDims(){
+  let W = video.videoWidth, H = video.videoHeight;
+  const maxW = parseInt($('resSel').value) || 0;
+  if (maxW && W > maxW) { H = Math.round(H * maxW / W); W = maxW; }
+  return [W, H];
+}
+
+async function extractParallel(times, onProgress){
+  // 1 video ngắn thì 1 luồng, còn lại tối đa 4 luồng decode song song
+  const N = times.length >= 8 ? Math.min(4, navigator.hardwareConcurrency || 2) : 1;
+  const src = video.src;
+  const workers = await Promise.all(Array.from({length: N}, () => new Promise((res, rej) => {
+    const v = document.createElement('video');
+    v.muted = true;
+    v.playsInline = true;
+    v.preload = 'auto';
+    v.src = src;
+    v.onloadeddata = () => res(v);
+    v.onerror = () => rej(new Error('không đọc được video'));
+    setTimeout(() => rej(new Error('timeout khi mở video')), 15000);
+  })));
+  const [W, H] = targetDims();
+  const fmt = $('fmtSel').value;
+  const results = new Array(times.length);
+  let next = 0, done = 0;
+
+  await Promise.all(workers.map(async v => {
+    const c = document.createElement('canvas');
+    c.width = W; c.height = H;
+    const cx = c.getContext('2d');
+    while (true) {
+      const i = next++;
+      if (i >= times.length) break;
+      await new Promise(r => {
+        const d = () => { v.removeEventListener('seeked', d); setTimeout(r, 10); };
+        v.addEventListener('seeked', d);
+        v.currentTime = times[i];
+      });
+      cx.drawImage(v, 0, 0, W, H);
+      results[i] = await new Promise(r => c.toBlob(r, fmt, 0.9));
+      done++;
+      onProgress(done, times.length);
+    }
+    v.removeAttribute('src'); v.load();
+  }));
+  return results;
 }
 
 function captureFrame(t){
@@ -393,8 +448,9 @@ function captureFrame(t){
 
 $('btnCaptureNow').onclick = async () => {
   if (!video.videoWidth) return;
-  canvas.width = video.videoWidth;
-  canvas.height = video.videoHeight;
+  const [W, H] = targetDims();
+  canvas.width = W;
+  canvas.height = H;
   await captureFrame(video.currentTime);
   cur = frames.length - 1;
   render();
