@@ -1,0 +1,623 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, user-scalable=no">
+<meta name="theme-color" content="#0d1117">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="FramePicker">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+<title>🎬 Frame Picker</title>
+<script src="jszip.min.js"></script>
+<style>
+  :root{
+    --bg:#0d1117; --card:#161b22; --card2:#1c2330; --border:#2d3644;
+    --text:#e6edf3; --muted:#8b949e; --accent:#3fb950; --accent2:#2ea043;
+    --blue:#388bfd; --danger:#f85149; --radius:14px;
+  }
+  *{box-sizing:border-box; -webkit-tap-highlight-color:transparent;}
+  html,body{overscroll-behavior-y:none;}
+  body{
+    margin:0; background:var(--bg); color:var(--text);
+    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;
+    padding-bottom:110px;
+    padding-top:env(safe-area-inset-top);
+  }
+  header{padding:14px 16px 4px; text-align:center;}
+  header h1{margin:0; font-size:1.25rem;}
+  header p{margin:5px 0 0; color:var(--muted); font-size:.82rem;}
+  .wrap{max-width:1100px; margin:0 auto; padding:12px 14px;}
+
+  #dropzone{
+    border:2px dashed var(--border); border-radius:var(--radius);
+    padding:44px 20px; text-align:center; cursor:pointer;
+    transition:.2s; background:var(--card);
+  }
+  #dropzone.drag{border-color:var(--accent); background:#12261a;}
+  #dropzone .big{font-size:2.6rem;}
+  #dropzone p{color:var(--muted); margin:8px 0 0; font-size:.9rem;}
+  #fileInput{display:none;}
+
+  .panel{
+    background:var(--card); border:1px solid var(--border);
+    border-radius:var(--radius); padding:14px; margin-top:14px;
+  }
+  .panel h3{margin:0 0 10px; font-size:.95rem; color:var(--muted); font-weight:600;}
+  .row{display:flex; gap:10px; flex-wrap:wrap; align-items:center;}
+  .field{display:flex; flex-direction:column; gap:5px; flex:1; min-width:120px;}
+  .field label{font-size:.78rem; color:var(--muted);}
+  select,input[type=number]{
+    background:var(--card2); color:var(--text); border:1px solid var(--border);
+    border-radius:10px; padding:10px 12px; font-size:1rem; width:100%;
+  }
+  .btn{
+    border:none; border-radius:12px; padding:12px 18px; font-size:1rem;
+    font-weight:600; cursor:pointer; transition:.15s;
+    display:inline-flex; align-items:center; gap:8px; justify-content:center;
+  }
+  .btn:active{transform:scale(.97);}
+  .btn-primary{background:var(--accent2); color:#fff;}
+  .btn-blue{background:var(--blue); color:#fff;}
+  .btn-ghost{background:var(--card2); color:var(--text); border:1px solid var(--border);}
+  .btn-danger{background:transparent; color:var(--danger); border:1px solid var(--danger);}
+  .btn:disabled{opacity:.45; cursor:not-allowed;}
+  .btn-sm{padding:8px 12px; font-size:.85rem;}
+
+  #videoBox{display:none;}
+  video{width:100%; max-height:300px; border-radius:var(--radius); background:#000; display:block;}
+  #videoMeta{color:var(--muted); font-size:.82rem; margin-top:8px;}
+
+  #progressWrap{display:none; margin-top:12px;}
+  #progressBar{height:10px; background:var(--card2); border-radius:99px; overflow:hidden;}
+  #progressFill{height:100%; width:0%; background:linear-gradient(90deg,var(--blue),var(--accent)); transition:width .15s; border-radius:99px;}
+  #progressText{font-size:.8rem; color:var(--muted); margin-top:6px; text-align:center;}
+
+  /* ===== Album browser (mobile) ===== */
+  #framesPanel{display:none;}
+  .frames-tools{display:flex; gap:6px; flex-wrap:wrap; margin-bottom:12px; align-items:center;}
+  .frames-tools .spacer{flex:1;}
+
+  #album{position:relative; border-radius:12px; overflow:hidden; background:#000;}
+  #slider{
+    display:flex; overflow-x:auto; scroll-snap-type:x mandatory;
+    -webkit-overflow-scrolling:touch; aspect-ratio:16/11;
+    scrollbar-width:none;
+  }
+  #slider::-webkit-scrollbar{display:none;}
+  .slide{
+    flex:0 0 100%; scroll-snap-align:center; display:flex;
+    align-items:center; justify-content:center;
+  }
+  .slide img{max-width:100%; max-height:100%; object-fit:contain;}
+  .ov{position:absolute; z-index:5;}
+  .badge{
+    background:rgba(0,0,0,.65); padding:4px 9px; border-radius:8px;
+    font-size:.75rem; pointer-events:none;
+  }
+  #selBtn{
+    left:10px; top:10px; width:38px; height:38px; border-radius:50%;
+    border:2px solid rgba(255,255,255,.85); background:rgba(0,0,0,.4);
+    display:flex; align-items:center; justify-content:center;
+    color:transparent; font-size:1.1rem; cursor:pointer;
+  }
+  #selBtn.on{background:var(--accent); border-color:var(--accent); color:#fff;}
+  #posBadge{right:10px; top:14px;}
+  #timeBadge{left:10px; bottom:12px;}
+  #zoomHint{right:10px; bottom:12px;}
+
+  #thumbs{
+    display:flex; gap:6px; overflow-x:auto; margin-top:10px;
+    -webkit-overflow-scrolling:touch; padding-bottom:4px;
+    scrollbar-width:none;
+  }
+  #thumbs::-webkit-scrollbar{display:none;}
+  .thumb{
+    flex:0 0 56px; height:56px; border-radius:8px; overflow:hidden;
+    border:2px solid transparent; position:relative; cursor:pointer;
+  }
+  .thumb img{width:100%; height:100%; object-fit:cover; pointer-events:none;}
+  .thumb.cur{border-color:#fff;}
+  .thumb.sel{border-color:var(--accent);}
+  .thumb.sel.cur{border-color:#fff;}
+  .thumb.sel::after{
+    content:"✓"; position:absolute; right:2px; bottom:2px;
+    background:var(--accent); color:#fff; border-radius:50%;
+    width:15px; height:15px; font-size:.65rem;
+    display:flex; align-items:center; justify-content:center;
+  }
+
+  /* ===== Grid (desktop) ===== */
+  #grid{display:grid; gap:10px; grid-template-columns:repeat(auto-fill,minmax(150px,1fr));}
+  .cell{
+    position:relative; border-radius:12px; overflow:hidden; cursor:pointer;
+    border:3px solid transparent; transition:border-color .15s;
+    background:var(--card2); aspect-ratio:16/10;
+  }
+  .cell img{width:100%; height:100%; object-fit:cover; display:block; pointer-events:none;}
+  .cell .time{position:absolute; left:6px; bottom:6px; background:rgba(0,0,0,.65); padding:2px 7px; border-radius:7px; font-size:.7rem;}
+  .cell .check{
+    position:absolute; left:6px; top:6px; width:26px; height:26px;
+    border-radius:50%; border:2px solid rgba(255,255,255,.8);
+    background:rgba(0,0,0,.35); display:flex; align-items:center;
+    justify-content:center; font-size:.85rem; color:transparent; transition:.15s;
+  }
+  .cell.sel{border-color:var(--accent);}
+  .cell.sel .check{background:var(--accent); border-color:var(--accent); color:#fff;}
+
+  #actionBar{
+    position:fixed; left:0; right:0; bottom:0; z-index:50;
+    background:rgba(13,17,23,.92); backdrop-filter:blur(14px);
+    border-top:1px solid var(--border);
+    padding:12px 14px calc(12px + env(safe-area-inset-bottom));
+    display:none;
+  }
+  #actionBar .inner{max-width:1100px; margin:0 auto; display:flex; gap:8px; align-items:center;}
+  #selCount{font-weight:700; font-size:.9rem; white-space:nowrap;}
+  #selCount b{color:var(--accent);}
+
+  #lightbox{
+    display:none; position:fixed; inset:0; z-index:100;
+    background:rgba(0,0,0,.95); flex-direction:column;
+  }
+  #lbSlider{
+    flex:1; display:flex; overflow-x:auto; scroll-snap-type:x mandatory;
+    -webkit-overflow-scrolling:touch; scrollbar-width:none;
+  }
+  #lbSlider::-webkit-scrollbar{display:none;}
+  .lb-slide{
+    flex:0 0 100%; scroll-snap-align:center; display:flex;
+    align-items:center; justify-content:center; padding:10px;
+  }
+  .lb-slide img{max-width:100%; max-height:100%; object-fit:contain;}
+  #lbTop{
+    display:flex; align-items:center; gap:10px;
+    padding:calc(10px + env(safe-area-inset-top)) 14px 10px;
+  }
+  #lbBottom{
+    display:flex; gap:10px; padding:10px 14px calc(14px + env(safe-area-inset-bottom));
+  }
+  .toast{
+    position:fixed; top:calc(16px + env(safe-area-inset-top)); left:50%; transform:translateX(-50%);
+    background:var(--accent2); color:#fff; padding:10px 20px;
+    border-radius:99px; font-size:.9rem; z-index:200; opacity:0;
+    transition:opacity .25s; pointer-events:none; font-weight:600;
+    max-width:86vw; text-align:center;
+  }
+  .toast.show{opacity:1;}
+</style>
+</head>
+<body>
+
+<header>
+  <h1>🎬 Frame Picker</h1>
+  <p>Tách ảnh từ video → chọn ảnh bạn thích → lưu về máy</p>
+</header>
+
+<div class="wrap">
+  <div id="dropzone">
+    <div class="big">📹</div>
+    <div style="font-weight:600; margin-top:6px;">Bấm để chọn video</div>
+    <p>Xử lý ngay trên máy, không upload đi đâu cả.</p>
+  </div>
+  <input type="file" id="fileInput" accept="video/*">
+
+  <div class="panel" id="videoBox">
+    <video id="video" playsinline muted controls preload="auto"></video>
+    <div id="videoMeta"></div>
+    <div class="row" style="margin-top:10px;">
+      <button class="btn btn-blue" style="flex:1;" id="btnCaptureNow">📸 Chụp khung hiện tại</button>
+      <button class="btn btn-ghost" id="btnChangeVideo">🔄</button>
+    </div>
+  </div>
+
+  <div class="panel" id="settings" style="display:none;">
+    <h3>⚙️ Tách ảnh tự động</h3>
+    <div class="row">
+      <div class="field">
+        <label>Cách tách</label>
+        <select id="modeSel">
+          <option value="count">Tổng số ảnh</option>
+          <option value="interval">Mỗi X giây 1 ảnh</option>
+        </select>
+      </div>
+      <div class="field">
+        <label id="valLabel">Số ảnh</label>
+        <input type="number" id="valInput" value="30" min="1" max="1000" inputmode="numeric">
+      </div>
+      <div class="field">
+        <label>Định dạng</label>
+        <select id="fmtSel">
+          <option value="image/jpeg">JPG</option>
+          <option value="image/png">PNG</option>
+        </select>
+      </div>
+    </div>
+    <div class="row" style="margin-top:12px;">
+      <button class="btn btn-primary" id="btnExtract" style="flex:1;">✂️ Bắt đầu tách ảnh</button>
+    </div>
+    <div id="progressWrap">
+      <div id="progressBar"><div id="progressFill"></div></div>
+      <div id="progressText"></div>
+    </div>
+  </div>
+
+  <div class="panel" id="framesPanel">
+    <div class="frames-tools">
+      <h3 style="margin:0;">🖼️ <span id="totalCount">0</span> ảnh</h3>
+      <div class="spacer"></div>
+      <button class="btn btn-ghost btn-sm" id="btnSelAll">Chọn hết</button>
+      <button class="btn btn-ghost btn-sm" id="btnSelNone">Bỏ chọn</button>
+      <button class="btn btn-danger btn-sm" id="btnClear">🗑</button>
+    </div>
+
+    <!-- Album trượt ngang (mobile) -->
+    <div id="albumWrap">
+      <div id="album">
+        <div id="slider"></div>
+        <div class="ov" id="selBtn">✓</div>
+        <div class="ov badge" id="posBadge">1/1</div>
+        <div class="ov badge" id="timeBadge">00:00</div>
+        <div class="ov badge" id="zoomHint">Chạm ảnh để phóng to</div>
+      </div>
+      <div id="thumbs"></div>
+    </div>
+
+    <!-- Lưới (desktop) -->
+    <div id="grid"></div>
+  </div>
+</div>
+
+<div id="actionBar">
+  <div class="inner">
+    <span id="selCount">Đã chọn <b>0</b></span>
+    <div style="flex:1;"></div>
+    <button class="btn btn-blue" id="btnShare" disabled style="display:none;">📤 Lưu vào Ảnh</button>
+    <button class="btn btn-primary" id="btnDownload" disabled>⬇️ Tải ZIP</button>
+  </div>
+</div>
+
+<div id="lightbox">
+  <div id="lbTop">
+    <button class="btn btn-ghost btn-sm" id="lbClose">✕ Đóng</button>
+    <div style="flex:1;"></div>
+    <span class="badge" id="lbPos"></span>
+  </div>
+  <div id="lbSlider"></div>
+  <div id="lbBottom">
+    <button class="btn btn-primary" id="lbToggle" style="flex:1;">✓ Chọn</button>
+    <button class="btn btn-blue" id="lbSave">📤</button>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+const $ = id => document.getElementById(id);
+const video = $('video');
+const canvas = document.createElement('canvas');
+const ctx = canvas.getContext('2d');
+const isMobile = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
+
+let frames = [];   // {blob, url, time, sel}
+let videoName = 'video';
+let cur = 0;       // ảnh hiện tại trong album
+let lbCur = 0;
+
+/* ---------- PWA ---------- */
+if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js');
+
+/* ---------- Chọn file ---------- */
+const dz = $('dropzone'), fi = $('fileInput');
+dz.onclick = () => fi.click();
+dz.ondragover = e => { e.preventDefault(); dz.classList.add('drag'); };
+dz.ondragleave = () => dz.classList.remove('drag');
+dz.ondrop = e => { e.preventDefault(); dz.classList.remove('drag'); if (e.dataTransfer.files[0]) loadVideo(e.dataTransfer.files[0]); };
+fi.onchange = () => { if (fi.files[0]) loadVideo(fi.files[0]); };
+$('btnChangeVideo').onclick = () => fi.click();
+
+function loadVideo(file){
+  videoName = file.name.replace(/\.[^.]+$/, '') || 'video';
+  video.src = URL.createObjectURL(file);
+  video.onloadedmetadata = () => {
+    $('videoBox').style.display = 'block';
+    $('settings').style.display = 'block';
+    dz.style.display = 'none';
+    $('videoMeta').textContent = `${file.name} • ${fmtTime(video.duration)} • ${video.videoWidth}×${video.videoHeight}`;
+  };
+}
+
+/* ---------- Cài đặt ---------- */
+$('modeSel').onchange = () => {
+  const isCount = $('modeSel').value === 'count';
+  $('valLabel').textContent = isCount ? 'Số ảnh' : 'Số giây';
+  $('valInput').value = isCount ? 30 : 1;
+};
+
+/* ---------- Tách ảnh ---------- */
+$('btnExtract').onclick = async () => {
+  const dur = video.duration;
+  if (!dur) return;
+  const mode = $('modeSel').value;
+  const val = Math.max(0.05, parseFloat($('valInput').value) || 1);
+  let times = [];
+  if (mode === 'count') {
+    const n = Math.min(1000, Math.round(val));
+    const step = dur / n;
+    for (let i = 0; i < n; i++) times.push(Math.min(i * step + step / 2, dur - 0.05));
+  } else {
+    for (let t = 0.05; t < dur; t += val) times.push(t);
+  }
+
+  const btn = $('btnExtract');
+  btn.disabled = true;
+  $('progressWrap').style.display = 'block';
+  video.pause();
+  canvas.width = video.videoWidth;
+  canvas.height = video.videoHeight;
+
+  const startIdx = frames.length;
+  for (let i = 0; i < times.length; i++) {
+    await seekTo(times[i]);
+    await captureFrame(times[i]);
+    const pct = Math.round((i + 1) / times.length * 100);
+    $('progressFill').style.width = pct + '%';
+    $('progressText').textContent = `Đang tách ${i + 1}/${times.length} ảnh… (${pct}%)`;
+  }
+  $('progressText').textContent = `✅ Xong! Đã tách ${times.length} ảnh.`;
+  btn.disabled = false;
+  cur = startIdx;
+  render();
+  $('framesPanel').scrollIntoView({behavior:'smooth'});
+};
+
+function seekTo(t){
+  return new Promise(res => {
+    const done = () => { video.removeEventListener('seeked', done); setTimeout(res, 20); };
+    video.addEventListener('seeked', done);
+    video.currentTime = t;
+  });
+}
+
+function captureFrame(t){
+  return new Promise(res => {
+    ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+    canvas.toBlob(blob => {
+      if (blob) frames.push({ blob, url: URL.createObjectURL(blob), time: t, sel: false });
+      res();
+    }, $('fmtSel').value, 0.92);
+  });
+}
+
+$('btnCaptureNow').onclick = async () => {
+  if (!video.videoWidth) return;
+  canvas.width = video.videoWidth;
+  canvas.height = video.videoHeight;
+  await captureFrame(video.currentTime);
+  cur = frames.length - 1;
+  render();
+  toast('📸 Đã chụp ' + fmtTime(video.currentTime));
+};
+
+/* ---------- Render ---------- */
+function render(){
+  $('framesPanel').style.display = frames.length ? 'block' : 'none';
+  $('actionBar').style.display = frames.length ? 'block' : 'none';
+  $('totalCount').textContent = frames.length;
+  $('albumWrap').style.display = isMobile ? 'block' : 'none';
+  $('grid').style.display = isMobile ? 'none' : 'grid';
+  $('btnShare').style.display = (isMobile && navigator.canShare) ? 'inline-flex' : 'none';
+  if (!frames.length) { updateBar(); return; }
+  if (cur >= frames.length) cur = frames.length - 1;
+  if (isMobile) renderAlbum(); else renderGrid();
+  updateBar();
+}
+
+/* ----- Album (mobile) ----- */
+function renderAlbum(){
+  const slider = $('slider');
+  slider.innerHTML = '';
+  frames.forEach((f, i) => {
+    const s = document.createElement('div');
+    s.className = 'slide';
+    s.innerHTML = `<img src="${f.url}" loading="lazy" alt="">`;
+    s.onclick = () => openLightbox(i);
+    slider.appendChild(s);
+  });
+  const thumbs = $('thumbs');
+  thumbs.innerHTML = '';
+  frames.forEach((f, i) => {
+    const t = document.createElement('div');
+    t.className = 'thumb' + (f.sel ? ' sel' : '') + (i === cur ? ' cur' : '');
+    t.innerHTML = `<img src="${f.url}" loading="lazy" alt="">`;
+    t.onclick = () => scrollToSlide(i, true);
+    thumbs.appendChild(t);
+  });
+  requestAnimationFrame(() => scrollToSlide(cur, false));
+  updateAlbumUI();
+}
+
+let scrollTimer;
+$('slider').addEventListener('scroll', () => {
+  clearTimeout(scrollTimer);
+  scrollTimer = setTimeout(() => {
+    const s = $('slider');
+    const i = Math.round(s.scrollLeft / s.clientWidth);
+    if (i !== cur && i >= 0 && i < frames.length) { cur = i; updateAlbumUI(); }
+  }, 80);
+});
+
+function scrollToSlide(i, smooth){
+  cur = i;
+  const s = $('slider');
+  s.scrollTo({left: i * s.clientWidth, behavior: smooth ? 'smooth' : 'auto'});
+  updateAlbumUI();
+}
+
+function updateAlbumUI(){
+  if (!frames.length) return;
+  const f = frames[cur];
+  $('posBadge').textContent = `${cur + 1}/${frames.length}`;
+  $('timeBadge').textContent = '⏱ ' + fmtTime(f.time);
+  $('selBtn').classList.toggle('on', f.sel);
+  document.querySelectorAll('#thumbs .thumb').forEach((t, i) => {
+    t.classList.toggle('cur', i === cur);
+    t.classList.toggle('sel', frames[i].sel);
+  });
+  const tEl = document.querySelectorAll('#thumbs .thumb')[cur];
+  if (tEl) tEl.scrollIntoView({behavior:'smooth', block:'nearest', inline:'center'});
+  updateBar();
+}
+
+$('selBtn').onclick = () => {
+  frames[cur].sel = !frames[cur].sel;
+  updateAlbumUI();
+};
+
+/* ----- Grid (desktop) ----- */
+function renderGrid(){
+  const grid = $('grid');
+  grid.innerHTML = '';
+  frames.forEach((f, i) => {
+    const cell = document.createElement('div');
+    cell.className = 'cell' + (f.sel ? ' sel' : '');
+    cell.innerHTML = `<img src="${f.url}" loading="lazy" alt=""><div class="check">✓</div><div class="time">${fmtTime(f.time)}</div>`;
+    cell.onclick = e => {
+      if (e.target.classList.contains('check')) { f.sel = !f.sel; render(); return; }
+      openLightbox(i);
+    };
+    grid.appendChild(cell);
+  });
+}
+
+/* ---------- Bar ---------- */
+function updateBar(){
+  const n = frames.filter(f => f.sel).length;
+  $('selCount').innerHTML = `Đã chọn <b>${n}</b>/${frames.length}`;
+  $('btnDownload').disabled = n === 0;
+  $('btnShare').disabled = n === 0;
+}
+$('btnSelAll').onclick = () => { frames.forEach(f => f.sel = true); render(); };
+$('btnSelNone').onclick = () => { frames.forEach(f => f.sel = false); render(); };
+$('btnClear').onclick = () => {
+  if (!confirm('Xoá toàn bộ ảnh đã tách?')) return;
+  frames.forEach(f => URL.revokeObjectURL(f.url));
+  frames = []; cur = 0;
+  render();
+};
+
+/* ---------- Lưu vào Ảnh (Web Share API — iPhone/Android) ---------- */
+$('btnShare').onclick = async () => {
+  const sel = frames.filter(f => f.sel);
+  if (!sel.length) return;
+  const ext = $('fmtSel').value === 'image/png' ? 'png' : 'jpg';
+  const files = sel.map((f, i) =>
+    new File([f.blob], `${videoName}_${fmtTime(f.time).replace(/:/g,'-')}.${ext}`, {type: f.blob.type}));
+  try {
+    if (navigator.canShare && navigator.canShare({files})) {
+      await navigator.share({files});
+      toast('📤 Chọn "Lưu ảnh" trong menu chia sẻ');
+    } else {
+      toast('Thiết bị không hỗ trợ — dùng Tải ZIP nhé');
+    }
+  } catch (e) { /* user cancelled */ }
+};
+
+/* ---------- Tải ZIP ---------- */
+$('btnDownload').onclick = async () => {
+  const sel = frames.filter(f => f.sel);
+  if (!sel.length) return;
+  const ext = $('fmtSel').value === 'image/png' ? 'png' : 'jpg';
+  if (sel.length === 1) { saveBlob(sel[0].blob, frameName(sel[0], ext)); return; }
+  const btn = $('btnDownload');
+  btn.disabled = true; btn.textContent = '⏳ Đang nén…';
+  try {
+    const zip = new JSZip();
+    sel.forEach(f => zip.file(frameName(f, ext), f.blob));
+    const blob = await zip.generateAsync({type:'blob'});
+    saveBlob(blob, `${videoName}_frames.zip`);
+    toast(`✅ Đã tải ${sel.length} ảnh (ZIP)`);
+  } finally { btn.textContent = '⬇️ Tải ZIP'; btn.disabled = false; }
+};
+
+function frameName(f, ext){ return `${videoName}_${fmtTime(f.time).replace(/:/g,'-')}.${ext}`; }
+function saveBlob(blob, name){
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = name;
+  document.body.appendChild(a);
+  a.click();
+  setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 4000);
+}
+
+/* ---------- Lightbox (phóng to, trượt được) ---------- */
+function openLightbox(i){
+  lbCur = i;
+  const s = $('lbSlider');
+  s.innerHTML = '';
+  frames.forEach(f => {
+    const d = document.createElement('div');
+    d.className = 'lb-slide';
+    d.innerHTML = `<img src="${f.url}" loading="lazy" alt="">`;
+    s.appendChild(d);
+  });
+  $('lightbox').style.display = 'flex';
+  requestAnimationFrame(() => {
+    s.scrollTo({left: i * s.clientWidth, behavior:'auto'});
+    updateLbUI();
+  });
+}
+let lbTimer;
+$('lbSlider').addEventListener('scroll', () => {
+  clearTimeout(lbTimer);
+  lbTimer = setTimeout(() => {
+    const s = $('lbSlider');
+    const i = Math.round(s.scrollLeft / s.clientWidth);
+    if (i >= 0 && i < frames.length && i !== lbCur) { lbCur = i; updateLbUI(); }
+  }, 80);
+});
+function updateLbUI(){
+  const f = frames[lbCur];
+  $('lbPos').textContent = `${lbCur + 1}/${frames.length} • ${fmtTime(f.time)}`;
+  $('lbToggle').textContent = f.sel ? '✓ Đã chọn — bấm để bỏ' : '＋ Chọn ảnh này';
+  $('lbToggle').className = 'btn btn-sm ' + (f.sel ? 'btn-primary' : 'btn-blue');
+  $('lbToggle').style.flex = '1';
+}
+$('lbClose').onclick = () => {
+  $('lightbox').style.display = 'none';
+  cur = lbCur;
+  if (isMobile) { renderAlbum(); } else { render(); }
+};
+$('lbToggle').onclick = () => { frames[lbCur].sel = !frames[lbCur].sel; updateLbUI(); updateBar(); };
+$('lbSave').onclick = async () => {
+  const f = frames[lbCur];
+  const ext = $('fmtSel').value === 'image/png' ? 'png' : 'jpg';
+  const file = new File([f.blob], frameName(f, ext), {type: f.blob.type});
+  if (navigator.canShare && navigator.canShare({files:[file]})) {
+    try { await navigator.share({files:[file]}); } catch(e){}
+  } else { saveBlob(f.blob, frameName(f, ext)); }
+};
+document.addEventListener('keydown', e => {
+  if ($('lightbox').style.display !== 'flex') return;
+  if (e.key === 'Escape') $('lbClose').click();
+  if (e.key === 'ArrowLeft' && lbCur > 0) $('lbSlider').scrollTo({left:(lbCur-1)*$('lbSlider').clientWidth, behavior:'smooth'});
+  if (e.key === 'ArrowRight' && lbCur < frames.length-1) $('lbSlider').scrollTo({left:(lbCur+1)*$('lbSlider').clientWidth, behavior:'smooth'});
+});
+
+/* ---------- Utils ---------- */
+function fmtTime(s){
+  const m = Math.floor(s / 60), sec = (s % 60).toFixed(1).padStart(4, '0');
+  return `${String(m).padStart(2,'0')}:${sec}`;
+}
+let toastTimer;
+function toast(msg){
+  const t = $('toast');
+  t.textContent = msg; t.classList.add('show');
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => t.classList.remove('show'), 2500);
+}
+</script>
+</body>
+</html>
