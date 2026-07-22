@@ -411,44 +411,80 @@ function targetDims(){
 }
 
 async function extractParallel(times, onProgress){
-  // 1 video ngắn thì 1 luồng, còn lại tối đa 4 luồng decode song song
-  const N = times.length >= 8 ? Math.min(4, navigator.hardwareConcurrency || 2) : 1;
   const src = video.src;
-  const workers = await Promise.all(Array.from({length: N}, () => new Promise((res, rej) => {
-    const v = document.createElement('video');
-    v.muted = true;
-    v.playsInline = true;
-    v.preload = 'auto';
-    v.src = src;
-    v.onloadeddata = () => res(v);
-    v.onerror = () => rej(new Error('không đọc được video'));
-    setTimeout(() => rej(new Error('timeout khi mở video')), 15000);
-  })));
   const [W, H] = targetDims();
   const fmt = $('fmtSel').value;
   const results = new Array(times.length);
   let next = 0, done = 0;
 
-  await Promise.all(workers.map(async v => {
+  const runWorker = async v => {
     const c = document.createElement('canvas');
     c.width = W; c.height = H;
     const cx = c.getContext('2d');
     while (true) {
       const i = next++;
       if (i >= times.length) break;
-      await new Promise(r => {
-        const d = () => { v.removeEventListener('seeked', d); setTimeout(r, 10); };
-        v.addEventListener('seeked', d);
-        v.currentTime = times[i];
-      });
+      await seekV(v, times[i]);
       cx.drawImage(v, 0, 0, W, H);
       results[i] = await new Promise(r => c.toBlob(r, fmt, 0.9));
       done++;
       onProgress(done, times.length);
     }
-    v.removeAttribute('src'); v.load();
-  }));
+  };
+
+  const t0 = video.currentTime;
+  // luồng 1 = chính video đang mở → BẮT ĐẦU NGAY, không chờ gì cả
+  const tasks = [runWorker(video)];
+
+  // các luồng phụ: load xong lúc nào thì tự nhảy vào phụ lúc đó
+  const extraN = times.length >= 12 ? Math.min(3, (navigator.hardwareConcurrency || 4) - 1) : 0;
+  if (workerPool.src !== src) {
+    workerPool.extras.forEach(v => { v.removeAttribute('src'); v.load(); });
+    workerPool = { src, extras: [] };
+  }
+  while (workerPool.extras.length < extraN) {
+    const v = document.createElement('video');
+    v.muted = true;
+    v.playsInline = true;
+    v.preload = 'auto';
+    v.src = src;
+    workerPool.extras.push(v);
+  }
+  workerPool.extras.slice(0, extraN).forEach(v => {
+    tasks.push((async () => {
+      if (await readyV(v)) await runWorker(v);
+    })());
+  });
+
+  await Promise.all(tasks);
+  video.currentTime = t0; // trả video về chỗ cũ
   return results;
+}
+
+let workerPool = { src: null, extras: [] }; // tái sử dụng giữa các lần tách
+
+function readyV(v){
+  return new Promise(res => {
+    if (v.readyState >= 1) return res(true);
+    const to = setTimeout(() => { cleanup(); res(false); }, 8000);
+    const ok = () => { cleanup(); res(true); };
+    const fail = () => { cleanup(); res(false); };
+    const cleanup = () => {
+      clearTimeout(to);
+      v.removeEventListener('loadedmetadata', ok);
+      v.removeEventListener('error', fail);
+    };
+    v.addEventListener('loadedmetadata', ok);
+    v.addEventListener('error', fail);
+  });
+}
+
+function seekV(v, t){
+  return new Promise(r => {
+    const d = () => { v.removeEventListener('seeked', d); setTimeout(r, 10); };
+    v.addEventListener('seeked', d);
+    v.currentTime = t;
+  });
 }
 
 function captureFrame(t){
