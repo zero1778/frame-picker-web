@@ -23,7 +23,7 @@
   body{
     margin:0; background:var(--bg); color:var(--text);
     font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;
-    padding-bottom:110px;
+    padding-bottom:calc(150px + env(safe-area-inset-bottom));
     padding-top:env(safe-area-inset-top);
   }
   header{padding:14px 16px 4px; text-align:center;}
@@ -557,11 +557,25 @@ function updateBar(){
 }
 $('btnSelAll').onclick = () => { frames.forEach(f => f.sel = true); render(); };
 $('btnSelNone').onclick = () => { frames.forEach(f => f.sel = false); render(); };
+/* Xóa hết: bấm 2 lần để xác nhận (confirm() bị treo trên PWA iOS) */
+let clearArm = 0;
 $('btnClear').onclick = () => {
-  if (!confirm('Xoá toàn bộ ảnh đã tách?')) return;
-  frames.forEach(f => URL.revokeObjectURL(f.url));
+  const now = Date.now();
+  if (now - clearArm > 3000) {
+    clearArm = now;
+    $('btnClear').textContent = 'Xóa hết?';
+    toast('Bấm lần nữa để xóa toàn bộ ảnh');
+    setTimeout(() => { if (Date.now() - clearArm >= 2900) $('btnClear').textContent = '🗑'; }, 3000);
+    return;
+  }
+  clearArm = 0;
+  $('btnClear').textContent = '🗑';
+  const old = frames;
   frames = []; cur = 0;
   render();
+  toast('🗑 Đã xóa hết ảnh');
+  // giải phóng bộ nhớ sau khi UI đã cập nhật để không giật
+  setTimeout(() => old.forEach(f => URL.revokeObjectURL(f.url)), 600);
 };
 
 /* ---------- Lưu vào Ảnh (Web Share API — iPhone/Android) ---------- */
